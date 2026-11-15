@@ -1,0 +1,42 @@
+name: Vision Zero secrets and API checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  safety-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vision-zero-frontend/package-lock.json
+      - name: Ensure no tracked env or repository snapshot files
+        run: |
+          test ! -e .env
+          test ! -e backend/.env
+          test ! -e vision-zero-frontend/.env
+          test ! -e repopack-output.txt
+          test ! -e vision-zero-frontend/repopack-output.txt
+          python - <<'PY'
+          from pathlib import Path
+          assert 'sync: false' in Path('backend/render.yaml').read_text()
+          assert 'VITE_ADMIN_TOKEN' not in Path('vision-zero-frontend/src/api/crashAPI.js').read_text()
+          assert 'mapboxgl.accessToken = "' not in Path('vision-zero-frontend/src/components/CrashMap.jsx').read_text()
+          PY
+      - name: Install Flask API test dependencies
+        run: python -m pip install -r backend/requirements-ci.txt
+      - name: Run offline API security regression tests
+        run: python -m unittest discover -s backend/tests -v
+      - name: Build browser application
+        working-directory: vision-zero-frontend
+        run: |
+          npm ci
+          npm run build

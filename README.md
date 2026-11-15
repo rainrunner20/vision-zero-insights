@@ -1,113 +1,42 @@
-# 🚦 Vision Zero Insights - Fullstack Crash Analytics Platform
+# Vision Zero Insights — NYC traffic crash research prototype
 
-Vision Zero Insights is a full-stack NYC traffic crash data analytics platform built to visualize, analyze, and predict crash patterns using open data, geospatial processing, and machine learning.
+An exploratory React / Mapbox visualization and Flask / PostgreSQL backend for investigating NYC traffic crash records. This is **not an operational crash-warning system** or validated injury forecast. Published files are research source code, not proof of a working hosted deployment.
 
----
+## Security update
 
-## 🌐 Project Overview
+The original public repository contained a PostgreSQL connection string and admin tokens in `.env` files, a deployment blueprint, data-loading code, and generated repository snapshots. Those secrets were removed from the active tree, and the public HTTP administrative data upload was removed. **The original credentials must still be revoked/rotated at the provider**; historical Git commits and clones may retain them.
 
-Vision Zero is a multi-agency effort in NYC aimed at eliminating traffic deaths and injuries. This app helps visualize the crash patterns spatially, explore contributing factors, and model injury severity for city analysts and transportation planners.
+Never put `DATABASE_URL` or an administrator token into `VITE_*` variables: Vite exposes those values in the browser bundle.
 
----
+## Implemented and verified locally via CI
 
-## 🧱 Tech Stack
+- A read-only Flask API for recent crash records and bounding-box filtering with parameterized SQL.
+- Request validation and sanitized API error responses without a database-dependent health check.
+- An experimental low/high severity classification endpoint with explicit input checks (not a measured injury count or reliable prediction).
+- Vite frontend build and Mapbox map when a **restricted public** Mapbox browser token is configured.
+- Automated API tests without provider credentials, plus frontend build checks.
 
-- **Frontend:** React, Vite, TailwindCSS, Mapbox GL JS
-- **Backend:** Flask, Gunicorn, PostgreSQL + PostGIS, scikit-learn
-- **Database Hosting:** Render PostgreSQL (cloud)
-- **Backend Hosting:** Render (Flask API)
-- **Frontend Hosting:** Vercel (React UI)
+## Local setup (Windows PowerShell)
 
----
+Use a **fresh database credential** in a local environment file, not in Git.
 
-## ⚙️ Architecture
-
-```
-React + Vite (Vercel) ---> Flask API (Render) ---> PostgreSQL + PostGIS (Render DB)
-                        ⇡                  ⇡
-               Tailwind UI           Machine Learning (scikit-learn)
-               Mapbox Markers       Geospatial Queries (PostGIS)
-```
-
----
-
-## 🌍 Data Source
-
-- NYC OpenData: [Motor Vehicle Collisions](https://data.cityofnewyork.us/Public-Safety/Motor-Vehicle-Collisions-Crashes/h9gi-nx95)
-
----
-
-## 🔥 Key Features
-
-1. **Interactive Mapbox Visualization**
-2. **Crash Marker Clustering**
-3. **ML Model to Predict Injury Severity**
-4. **API Filtering (by borough, bounding box, etc)**
-5. **Geo-enabled PostgreSQL for Spatial Queries**
-6. **Live React Frontend with Tailwind Design**
-
----
-
-## 📁 Project Structure
-
-```
-vision-zero-insights/
-├── backend/
-│   ├── app.py
-│   ├── model.py
-│   ├── geo_utils.py
-│   ├── db.py
-│   └── upload_crash_data_to_render_PSQL.py
-├── vision-zero-frontend/
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── components/
-│   │   │   └── CrashMap.jsx
-│   │   ├── api/
-│   │   │   └── crashAPI.js
-│   ├── tailwind.config.js
-│   └── postcss.config.js
-├── crash_data_cleaned.csv
-├── README_General.txt
+```powershell
+cd backend
+py -m pip install -r requirements.txt
+$env:DATABASE_URL = "<your rotated PostgreSQL connection string>"
+$env:VISIONZERO_ALLOWED_ORIGINS = "http://localhost:5173"
+py app.py
 ```
 
----
+Then in another terminal:
 
-## 🧠 ML Pipeline
-
-```python
-# model.py
-from sklearn.linear_model import LogisticRegression
-
-# Train model on historical crash data to predict severity
-model = LogisticRegression()
-model.fit(X_train, y_train)
+```powershell
+cd vision-zero-frontend
+npm ci
+# Set VITE_MAPBOX_PUBLIC_TOKEN to a token restricted to your domain and allowed APIs.
+npm run dev
 ```
 
-- Inputs: Number of people injured, borough, contributing factor
-- Output: Severity label (low, moderate, high)
+Use `py -m unittest discover -s backend/tests -v` from the root for offline checks. External DB/model integration has not been verified. Before production use, audit SQL privileges, map token restrictions, authentication, provenance, and independent evaluation.
 
----
-
-## 🗺️ Spatial DB (PostGIS)
-
-```sql
--- Enables geospatial indexing and filtering
-CREATE EXTENSION postgis;
-SELECT * FROM crash_data WHERE ST_DWithin(geom, ST_MakePoint(...), radius);
-```
-
----
-
-## 🧪 Testing & Debugging
-
-Use `console.log()` in frontend and `print()` in backend. Use browser dev tools, Flask debug, and Postman.
-
----
-
-## 💡 Real World Problem Solved
-
-This app empowers:
-- 🚓 NYPD with crash heatmaps
-- 🚑 EMS planning routes to high-risk zones
-- 🏙️ NYC DOT to predict which streets need safety intervention
+See [credential response](SECURITY_CREDENTIAL_ROTATION.md) for the mandatory owner actions.
