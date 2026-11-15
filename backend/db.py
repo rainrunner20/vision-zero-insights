@@ -1,41 +1,47 @@
-# backend/db.py
-import psycopg2
+"""Parameterized read-only queries. SQL connection strings are never stored here."""
 import os
+from contextlib import closing
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+import psycopg2
 
-def get_recent_crashes(limit=100):
-    query = """
-        SELECT crash_date, borough, latitude, longitude,
-               number_of_persons_injured, contributing_factor_vehicle_1
-        FROM crash_data
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-        ORDER BY crash_date DESC
-        LIMIT %s;
-    """
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute(query, (limit,))
-        rows = cur.fetchall()
-        columns = [desc[0] for desc in cur.description]
-        cur.close()
-        conn.close()
-        return [dict(zip(columns, row)) for row in rows]
-    except Exception as e:
-        print("DB error:", e)
-        return []
+FIELDS = (
+    "crash_date", "borough", "latitude", "longitude",
+    "number_of_persons_injured", "contributing_factor_vehicle_1",
+)
+SELECT = (
+    "SELECT crash_date, borough, latitude, longitude, "
+    "number_of_persons_injured, contributing_factor_vehicle_1 FROM crash_data "
+)
 
-def get_crashes_in_bbox(min_lon, min_lat, max_lon, max_lat, limit=100):
-    query = """
-        SELECT crash_date, borough, latitude, longitude,
-               number_of_persons_injured, contributing_factor_vehicle_1
-        FROM crash_data
-        WHERE ST_Intersects(
-            geom,
-            ST_MakeEnvelope(%s, %s, %s, %s, 4326)
-        )
-        ORDER BY crash_date DESC
-        LIMIT %s;
-    """
-    ...
+
+def _fetch(query, args):
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        raise RuntimeError("DATABASE_URL is not configured")
+    with closing(psycopg2.connect(dsn, connect_timeout=5)) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(query, args)
+            rows = cursor.fetchall()
+    return [dict(zip(FIELDS, row)) for row in rows]
+
+
+def get_recent_crashes(limit=200):
+    if not isinstance(limit, int) or not 1 <= limit <= 500:
+        raise ValueError("Limit must be 1-500")
+    return _fetch(
+        SELECT + "WHERE latitude IS NOT NULL AND longitude IS NOT NULL "
+        "ORDER BY crash_date DESC LIMIT %s", (limit,)
+    )
+
+
+def get_crashes_in_bbox(min_lon, min_lat, max_lon, max_lat, limit=500):
+    if not isinstance(limit, int) or not 1 <= limit <= 500:
+        raise ValueError("Limit must be 1-500")
+    # Filtering numeric latitude and longitude avoids assuming the old
+    # database has a PostGIS geom column (the import script did not create it).
+    return _fetch(
+        SELECT + "WHERE longitude BETWEEN %s AND %s "
+        "AND latitude BETWEEN %s AND %s "
+        "ORDER BY crash_date DESC LIMIT %s",
+        (min_lon, max_lon, min_lat, max_lat, limit)
+    )

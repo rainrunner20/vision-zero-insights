@@ -1,127 +1,97 @@
-from flask import Flask, jsonify, request
-from db import get_recent_crashes
-from model import predict_severity
-from flask_cors import CORS
-from geo_utils import make_geodf_from_crash_data, filter_by_bbox_coords
-from dotenv import load_dotenv
-from werkzeug.exceptions import Forbidden
-import csv
-import psycopg2
+"""Read-only crash-data research API with a restricted demo prediction endpoint.
+
+No public administrative data upload is exposed. Use an authorized,
+offline database import instead of posting tokens through the browser.
+"""
+import logging
 import os
-from dotenv import load_dotenv
-load_dotenv()
+from math import isfinite
+
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+
+from db import get_recent_crashes, get_crashes_in_bbox
+
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 
-@app.route('/')
-def home():
-    return "✅ Flask backend is alive!"
-# @app.route("/api/crashes")
-# def crashes():
-#     borough = request.args.get("borough")
-#     bbox = request.args.get("bbox")
+allowed = [
+    origin.strip() for origin in os.getenv(
+        "VISIONZERO_ALLOWED_ORIGINS", "http://localhost:5173"
+    ).split(",") if origin.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": allowed}})
 
-#     data = get_recent_crashes(limit=1000)
-#     df = pd.DataFrame(data)
 
-#     if borough:
-#         df = filter_by_borough(df, borough)
+@app.get("/")
+@app.get("/health")
+def health():
+    # Process liveness, not proof that the database or model is available.
+    return jsonify(status="ok", purpose="research-prototype")
 
-#     if bbox:
-#         gdf = make_geodf_from_crash_data(df)
-#         gdf = filter_by_bbox_coords(gdf, bbox)
-#         df = pd.DataFrame(gdf.drop(columns="geometry"))
 
-#     return jsonify(df.to_dict(orient="records"))
-
-DATABASEURL = os.getenv('DATABASE_URL')
-@app.route('/api/crashes')
-def get_crashes():
+@app.get("/api/crashes")
+def crashes():
     try:
-        conn = psycopg2.connect(DATABASEURL)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT crash_date, borough, latitude, longitude,
-                   number_of_persons_injured, contributing_factor_vehicle_1
-            FROM crash_data
-            LIMIT 500;
-        """)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        data = [
-            {
-                "crash_date": r[0],
-                "borough": r[1],
-                "latitude": r[2],
-                "longitude": r[3],
-                "number_of_persons_injured": r[4],
-                "contributing_factor_vehicle_1": r[5],
-            }
-            for r in rows
-        ]
-        return jsonify(data)
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/predict", methods=["POST"])
-def predict():
-    input_data = request.get_json()
-    prediction = predict_severity(input_data)
-    return jsonify({
-        "predicted_severity": prediction
-        })
-
-@app.route("/api/admin/upload", methods=["POST"])
-def admin_upload():
-    # For security: simple token check
-    token = request.args.get("token")
-    print("Backend token:", os.getenv("ADMIN_TOKEN"))
-    print("Request token:", token)
-    if token != os.getenv("ADMIN_TOKEN"):
-        return jsonify({"error": "Forbidden"}), 403
-    #raise Forbidden("Invalid token")
+        count = min(max(int(request.args.get("limit", "200")), 1), 500)
+    except ValueError:
+        return jsonify(error="Limit must be an integer."), 400
 
     try:
-        with open("crash_data_cleaned.csv", "r") as f:
-            reader = csv.DictReader(f)
-            conn = psycopg2.connect(DATABASE_URL)
-            cur = conn.cursor()
-            for row in reader:
-                cur.execute("""
-                    INSERT INTO crash_data (
-                        crash_date, borough, latitude, longitude,
-                        number_of_persons_injured, contributing_factor_vehicle_1
-                    ) VALUES (%s, %s, %s, %s, %s, %s)
-                """, (
-                    row["crash_date"],
-                    row["borough"],
-                    float(row["latitude"]),
-                    float(row["longitude"]),
-                    int(row["number_of_persons_injured"]),
-                    row["contributing_factor_vehicle_1"]
-                ))
-            conn.commit()
-            cur.close()
-            conn.close()
-            return jsonify({"status": "success"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(get_recent_crashes(limit=count))
+    except Exception:
+        app.logger.exception("Crash query failed")
+        return jsonify(error="Crash data is temporarily unavailable."), 503
 
 
-
-@app.route("/api/crashes/bbox")
+@app.get("/api/crashes/bbox")
 def crashes_bbox():
-    args = request.args
-    min_lon, min_lat, max_lon, max_lat = map(float, [
-        args.get("min_lon"), args.get("min_lat"),
-        args.get("max_lon"), args.get("max_lat")
-    ])
-    data = get_crashes_in_bbox(min_lon, min_lat, max_lon, max_lat)
-    return jsonify(data)
+    try:
+        min_lon, min_lat, max_lon, max_lat = [
+            float(request.args[field]) for field in (
+                "min_lon", "min_lat", "max_lon", "max_lat"
+            )
+        ]
+        values = (min_lon, min_lat, max_lon, max_lat)
+        if not all(isfinite(v) for v in values) or not (
+            -180 <= min_lon < max_lon <= 180 and
+            -90 <= min_lat < max_lat <= 90
+        ):
+            raise ValueError("Invalid bounding box.")
+    except (KeyError, ValueError, TypeError):
+        return jsonify(error="Supply valid min_lon, min_lat, max_lon and max_lat."), 400
+
+    try:
+        return jsonify(get_crashes_in_bbox(min_lon, min_lat, max_lon, max_lat, limit=500))
+    except Exception:
+        app.logger.exception("Bounding-box query failed")
+        return jsonify(error="Crash data is temporarily unavailable."), 503
+
+
+@app.post("/api/predict")
+def predict():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="Expected a JSON object."), 400
+
+    borough = payload.get("borough")
+    factor = payload.get("contributing_factor_vehicle_1")
+    permitted = {"MANHATTAN", "QUEENS", "BROOKLYN", "BRONX", "STATEN ISLAND"}
+    if borough not in permitted or not isinstance(factor, str) or not (1 <= len(factor.strip()) <= 128):
+        return jsonify(error="Provide a borough and a contributing factor (1-128 characters)."), 400
+
+    try:
+        # The historical model trained on borough + contributing_factor only.
+        # crash_date is not a learned feature in the existing model.
+        from model import predict_severity
+        severity = predict_severity({"borough": borough, "contributing_factor": factor.strip()})
+        if severity not in {"low", "high"}:
+            raise ValueError("Model unavailable")
+        return jsonify(predicted_severity=severity, is_clinically_validated=False)
+    except Exception:
+        app.logger.exception("Research model unavailable")
+        return jsonify(error="Prediction model is temporarily unavailable."), 503
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=False)

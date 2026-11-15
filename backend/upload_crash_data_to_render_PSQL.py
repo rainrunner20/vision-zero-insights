@@ -4,7 +4,7 @@ import csv
 import os
 
 # ✅ Set your database URL
-DATABASE_URL = "postgresql://visionzero_db_user:6s2vRfmAsALLhYtZYVegJZUJYi0YZIyI@dpg-d18bhkogjchc73eogai0-a.oregon-postgres.render.com/visionzero_db"
+DATABASE_URL = os.environ['DATABASE_URL']
 
 # ✅ Connect to the PostgreSQL database
 conn = psycopg2.connect(DATABASE_URL)

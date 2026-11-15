@@ -3,12 +3,13 @@ import mapboxgl from "mapbox-gl";
 import { fetchCrashData } from "../api/crashAPI";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-mapboxgl.accessToken = "pk.eyJ1IjoiamltYm9qb25lczEyMyIsImEiOiJjbWMyMWF2eXYwM21iMm9wejNwOW12bzBlIn0.BIplMo_WDg0a68Ftg_ccUw";
+mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN || '';
 
 export default function CrashMap({ onMarkerClick }) {
   const mapRef = useRef(null);
 
   useEffect(() => {
+    if (!import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN || !mapRef.current) return undefined;
     const map = new mapboxgl.Map({
       container: mapRef.current,
       style: "mapbox://styles/mapbox/streets-v11",
@@ -81,5 +82,10 @@ export default function CrashMap({ onMarkerClick }) {
     return () => map.remove();
   }, [onMarkerClick]);
 
+  if (!import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN) {
+    return <div role="status" className="p-8 text-slate-700">
+      Map visualization is not configured. Add a restricted Mapbox public token to VITE_MAPBOX_PUBLIC_TOKEN.
+    </div>;
+  }
   return <div ref={mapRef} className="w-full h-[calc(100vh-64px)]" />;
 }
