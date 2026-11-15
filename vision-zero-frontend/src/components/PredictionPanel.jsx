@@ -19,13 +19,13 @@ export default function PredictionPanel() {
     setLoading(true)
     setPrediction(null)
     try {
-      const res = await fetch("https://vision-zero-insights.onrender.com/api/predict", {
+      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '') + '/api/predict', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData)
       })
       const data = await res.json()
-      setPrediction(data.predicted_injuries)
+      setPrediction(res.ok ? data.predicted_severity : 'Unavailable')
     } catch (err) {
       console.error("Prediction failed", err)
       setPrediction("❌ Prediction failed")
@@ -35,7 +35,11 @@ export default function PredictionPanel() {
 
   return (
     <div className="fixed top-16 right-0 w-full max-w-md bg-white shadow-lg p-6 z-50">
-      <h2 className="text-xl font-bold mb-4">🚑 Predict Injuries</h2>
+      <h2 className="text-xl font-bold mb-4">Traffic crash severity (research demo)</h2>
+      <p className="my-3 text-sm text-gray-600">
+        An experimental low/high classification based on limited historical inputs.
+        Not a forecast of actual injuries, clinical evidence, or safety advice.
+      </p>
       <form onSubmit={handleSubmit} className="space-y-4">
         <input
           type="date"
@@ -73,7 +77,7 @@ export default function PredictionPanel() {
       </form>
       {prediction !== null && (
         <div className="mt-4 text-lg">
-          📊 Predicted Injuries: <b>{prediction}</b>
+          Experimental category: <b>{prediction}</b>
         </div>
       )}
     </div>
